@@ -1,0 +1,39 @@
+services:
+  backend:
+    build:
+      context: ./back_end
+      dockerfile: Dockerfile
+
+    container_name: anatome-backend
+
+    environment:
+      DATABASE_URL: sqlite:////app/data/anatome.db
+
+    env_file:
+      - ./back_end/.env
+
+    volumes:
+      - anatome_database:/app/data
+
+    ports:
+      - "8000:8000"
+
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./front_end
+      dockerfile: Dockerfile
+
+    container_name: anatome-frontend
+
+    depends_on:
+      - backend
+
+    ports:
+      - "80:80"
+
+    restart: unless-stopped
+
+volumes:
+  anatome_database:

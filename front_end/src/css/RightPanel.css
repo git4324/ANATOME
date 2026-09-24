@@ -1,0 +1,196 @@
+.panel-right {
+
+position:fixed;
+
+right:20px;
+
+top:90px;
+
+width:330px;
+
+padding:20px;
+
+max-height:80vh;
+
+overflow:auto;
+
+z-index: 100;
+
+}
+
+
+
+.no-selection {
+
+text-align:center;
+
+padding:50px 10px;
+
+}
+
+
+.no-sel-icon {
+
+font-size:50px;
+
+}
+
+
+.no-sel-title {
+
+font-size:20px;
+font-weight:bold;
+
+margin:15px 0;
+
+}
+
+
+.no-sel-desc {
+
+opacity:.7;
+
+}
+
+
+
+.detail-header {
+
+display:flex;
+
+gap:15px;
+
+align-items:center;
+
+}
+
+
+
+.region-icon {
+
+font-size:40px;
+
+}
+
+
+.region-title {
+
+font-size:22px;
+font-weight:bold;
+
+}
+
+
+
+.form-section {
+
+margin-top:20px;
+
+}
+
+
+
+.form-label {
+
+margin-bottom:10px;
+font-weight:600;
+
+}
+
+
+
+.severity-display {
+
+display:flex;
+
+align-items:center;
+
+gap:10px;
+
+}
+
+
+
+.severity-number {
+
+font-size:40px;
+
+font-weight:bold;
+
+}
+
+
+
+.severity-slider {
+
+width:100%;
+
+}
+
+
+
+.option-pills {
+
+display:flex;
+
+flex-wrap:wrap;
+
+gap:8px;
+
+}
+
+
+
+.option-pill {
+
+border:none;
+
+background:#252b45;
+
+color:white;
+
+padding:8px 12px;
+
+border-radius:20px;
+
+}
+
+
+
+.option-pill.active {
+
+background:#6d5dfc;
+
+}
+
+
+
+.notes-textarea {
+
+width:100%;
+
+height:100px;
+
+border-radius:10px;
+
+padding:10px;
+
+background:#161b2d;
+
+color:white;
+
+border:none;
+
+}
+
+
+
+.detail-actions {
+
+display:flex;
+
+gap:10px;
+
+margin-top:20px;
+
+}

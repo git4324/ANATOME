@@ -1,0 +1,98 @@
+.panel-left {
+
+  position:fixed;
+
+  top:90px;
+  left:20px;
+
+  width:280px;
+
+  padding:20px;
+  z-index: 100;
+
+}
+
+
+
+.glass-panel {
+
+background:
+rgba(255,255,255,0.08);
+
+border:
+1px solid rgba(255,255,255,.15);
+
+backdrop-filter:
+blur(15px);
+
+border-radius:20px;
+
+}
+
+
+
+.panel-title {
+
+font-size:18px;
+font-weight:600;
+
+margin-bottom:20px;
+
+}
+
+
+
+.panel-summary {
+
+display:flex;
+justify-content:space-between;
+
+}
+
+
+
+.summary-stat {
+
+text-align:center;
+
+}
+
+
+
+.stat-value {
+
+font-size:28px;
+font-weight:bold;
+
+}
+
+
+
+.stat-label {
+
+opacity:.7;
+font-size:13px;
+
+}
+
+
+
+.empty-state {
+
+text-align:center;
+
+padding:40px 10px;
+
+opacity:.7;
+
+}
+
+
+
+.empty-icon {
+
+font-size:35px;
+
+margin-bottom:10px;
+
+}

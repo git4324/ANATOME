@@ -1,0 +1,152 @@
+.top-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+
+  width: 100%;
+  height: 75px;
+
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  padding: 0 30px;
+
+  background: rgba(20,25,45,0.85);
+  backdrop-filter: blur(12px);
+
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+
+  z-index: 100;
+}
+
+
+.logo {
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+
+
+.logo-icon {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #6d5dfc;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.14);
+}
+
+.logo-icon::before,
+.logo-icon::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 2px;
+  background: white;
+  transform: translate(-50%, -50%);
+}
+
+.logo-icon::before {
+  width: 14px;
+  height: 3px;
+}
+
+.logo-icon::after {
+  width: 3px;
+  height: 14px;
+}
+
+
+.logo-text {
+  font-size:24px;
+  font-weight:700;
+}
+
+
+.logo-tag {
+  font-size:12px;
+  opacity:.7;
+}
+
+
+
+.top-bar-actions {
+  display:flex;
+  gap:10px;
+}
+
+
+
+.btn {
+
+  border:none;
+  border-radius:10px;
+
+  padding:10px 16px;
+
+  font-size:14px;
+
+}
+
+
+.btn-primary {
+  background:#6d5dfc;
+  color:white;
+}
+
+
+.btn-secondary {
+
+  background:#30364f;
+  color:white;
+
+}
+
+
+.btn-danger {
+
+  background:#e63946;
+  color:white;
+
+}
+
+
+.btn-block {
+  flex:1;
+}
+
+@media (max-width: 720px) {
+  .top-bar {
+    height: 64px;
+    padding: 0 10px;
+  }
+
+  .logo {
+    gap: 7px;
+  }
+
+  .logo-icon {
+    width: 24px;
+    height: 24px;
+  }
+
+  .logo-text {
+    font-size: 15px;
+  }
+
+  .logo-tag {
+    display: none;
+  }
+
+  .top-bar-actions {
+    gap: 6px;
+  }
+
+  .top-bar .btn {
+    padding: 8px 9px;
+    border-radius: 8px;
+    font-size: 11px;
+  }
+}

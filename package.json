@@ -1,0 +1,11 @@
+{
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "npm --prefix front_end run build",
+    "preview": "npm --prefix front_end run preview -- --host 127.0.0.1"
+  },
+  "dependencies": {
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8"
+  }
+}

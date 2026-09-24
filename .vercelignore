@@ -1,0 +1,10 @@
+.venv/
+work/
+outputs/
+node_modules/
+front_end/node_modules/
+front_end/dist/
+back_end/__pycache__/
+back_end/anatome.db
+front_end/test_screenshot.png
+front_end/debug_assignments.txt

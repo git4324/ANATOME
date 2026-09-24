@@ -1,0 +1,14 @@
+.env
+back_end/.env
+.venv/
+venv/
+back_end/venv/
+__pycache__/
+*.pyc
+node_modules/
+front_end/node_modules/
+front_end/dist/
+back_end/anatome.db
+work/
+outputs/
+front_end/test_screenshot.png
