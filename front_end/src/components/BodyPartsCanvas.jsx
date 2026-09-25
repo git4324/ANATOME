@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 
@@ -9,13 +9,14 @@ import "../css/Canvas3D.css";
 
 gsap.registerPlugin(ScrollTrigger);
 
-const ATLAS_URL = "/models/bodyparts3d/atlas.json";
-const DISPLAY_SYSTEMS = new Set(["skeletal", "muscular", "connective"]);
-const SYSTEM_COLORS = {
-  skeletal: "#dfd8c4",
-  muscular: "#9f3f45",
-  connective: "#d5b99c",
-};
+// Each selectable structure in this Blender export is an individually named GLB mesh.
+// Keep its original object name when re-exporting so selection and saved pain spots still map correctly.
+const MODEL_URL = "/models/zanatomy_split.glb";
+const SELECTED_COLOR = new THREE.Color("#f43d4a");
+const HOVER_COLOR = new THREE.Color("#649cff");
+const MUSCLE_COLOR = new THREE.Color("#a64a50");
+const CONNECTIVE_COLOR = new THREE.Color("#cbb6a2");
+const CONNECTIVE_NAME = /fascia|ligament|tendon|retinaculum|bursa|sheath|aponeurosis|septum|band|capsule/i;
 
 const ANATOMY_LIBRARY = {
   deltoid: {
@@ -95,80 +96,20 @@ function canonicalName(name = "") {
 
 function anatomyForPart(part) {
   const name = canonicalName(part?.name);
+  if (/biceps femoris|semitendinosus|semimembranosus/.test(name)) return ANATOMY_LIBRARY.hamstring;
   const match = Object.keys(ANATOMY_LIBRARY).find((key) => name.includes(key));
   return match ? ANATOMY_LIBRARY[match] : DEFAULTS[part?.system] || DEFAULTS.muscular;
 }
 
 function layerAllows(mode, system) {
-  if (mode === "both") return DISPLAY_SYSTEMS.has(system);
-  if (mode === "skeleton") return system === "skeletal" || system === "connective";
-  return system === "muscular" || system === "connective";
-}
-
-async function decodeGzip(response, expectedBytes) {
-  if (!response.ok) throw new Error(`Anatomy download failed (${response.status}).`);
-  const payload = await response.arrayBuffer();
-  const signature = new Uint8Array(payload, 0, Math.min(2, payload.byteLength));
-  const isGzipPayload = signature[0] === 0x1f && signature[1] === 0x8b;
-  if (!isGzipPayload) {
-    if (payload.byteLength !== expectedBytes) throw new Error("An anatomy file was incomplete. Please reload.");
-    return payload;
-  }
-  if (typeof DecompressionStream === "undefined") throw new Error("This browser cannot unpack the anatomy model. Please use a current browser.");
-  const stream = new Blob([payload]).stream().pipeThrough(new DecompressionStream("gzip"));
-  const buffer = await new Response(stream).arrayBuffer();
-  if (buffer.byteLength !== expectedBytes) throw new Error("An anatomy file was incomplete. Please reload.");
-  return buffer;
-}
-
-function createAtlasMaterial(system, visualTexture, textureWidth) {
-  const material = new THREE.MeshStandardMaterial({
-    color: SYSTEM_COLORS[system],
-    roughness: system === "skeletal" ? 0.68 : 0.57,
-    metalness: 0.01,
-    side: THREE.DoubleSide,
-  });
-
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.partVisuals = { value: visualTexture };
-    shader.uniforms.visualWidth = { value: textureWidth };
-    shader.vertexShader = `
-      attribute float partIndex;
-      uniform sampler2D partVisuals;
-      uniform float visualWidth;
-      varying vec4 anatomyVisual;
-    ` + shader.vertexShader;
-    shader.vertexShader = shader.vertexShader.replace(
-      "#include <begin_vertex>",
-      `#include <begin_vertex>
-       anatomyVisual = texture2D(partVisuals, vec2((partIndex + 0.5) / visualWidth, 0.5));`,
-    );
-    shader.fragmentShader = "varying vec4 anatomyVisual;\n" + shader.fragmentShader;
-    shader.fragmentShader = shader.fragmentShader.replace(
-      "#include <clipping_planes_fragment>",
-      `#include <clipping_planes_fragment>
-       if (anatomyVisual.a < 0.01) discard;`,
-    );
-    shader.fragmentShader = shader.fragmentShader.replace(
-      "#include <color_fragment>",
-      `#include <color_fragment>
-       diffuseColor.rgb *= mix(0.18, 1.0, anatomyVisual.a);
-       if (anatomyVisual.b > 0.02) {
-         vec3 lowPain = vec3(0.24, 0.67, 0.43);
-         vec3 highPain = vec3(0.86, 0.18, 0.25);
-         diffuseColor.rgb = mix(diffuseColor.rgb, mix(lowPain, highPain, anatomyVisual.b), 0.78);
-       }
-       if (anatomyVisual.g > 0.5) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.30, 0.62, 1.0), 0.72);
-       if (anatomyVisual.r > 0.5) diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.95, 0.12, 0.18), 0.88);`,
-    );
-  };
-  return material;
+  return mode === "all" || system === mode;
 }
 
 export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, setPainData, painData = {} }) {
   const stageRef = useRef(null);
   const hostRef = useRef(null);
   const tooltipRef = useRef(null);
+  const blurRef = useRef(null);
   const infoPanelRef = useRef(null);
   const engineRef = useRef(null);
   const painDataRef = useRef(painData);
@@ -176,12 +117,12 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
   const hoveredPartRef = useRef(null);
   const focusPartRef = useRef(() => {});
   const selectPartRef = useRef(() => {});
-  const layerRef = useRef("both");
+  const layerRef = useRef("muscular");
 
   const [modelStatus, setModelStatus] = useState("loading");
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState("");
-  const [layerMode, setLayerMode] = useState("both");
+  const [layerMode, setLayerMode] = useState("muscular");
   const [panelOpen, setPanelOpen] = useState(false);
   const [selectedPart, setSelectedPart] = useState(null);
   const [availableParts, setAvailableParts] = useState([]);
@@ -228,7 +169,7 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.12;
+    renderer.toneMappingExposure = 0.92;
     renderer.domElement.setAttribute("aria-label", "Interactive adult human musculoskeletal anatomy");
     host.appendChild(renderer.domElement);
 
@@ -236,18 +177,18 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.enablePan = false;
-    controls.minDistance = 0.55;
+    controls.minDistance = 0.25;
     controls.maxDistance = 8;
     controls.target.set(0, 0.9, 0);
 
-    scene.add(new THREE.HemisphereLight(0xe9efff, 0x251017, 1.65));
-    const key = new THREE.DirectionalLight(0xfff4e8, 3.6);
+    scene.add(new THREE.HemisphereLight(0xe9efff, 0x251017, 1.1));
+    const key = new THREE.DirectionalLight(0xfff4e8, 2.2);
     key.position.set(-2.8, 4.5, 4);
     scene.add(key);
-    const fill = new THREE.PointLight(0x5f8fff, 13, 9, 2);
+    const fill = new THREE.PointLight(0x5f8fff, 6, 9, 2);
     fill.position.set(3, 1.5, 2.4);
     scene.add(fill);
-    const rim = new THREE.DirectionalLight(0xff6b78, 2.1);
+    const rim = new THREE.DirectionalLight(0xff6b78, 1.2);
     rim.position.set(2.4, 2.4, -3);
     scene.add(rim);
 
@@ -263,10 +204,8 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     const parts = [];
-    const materials = [];
-    let atlas;
-    let visualData;
-    let visualTexture;
+    const pickableMeshes = [];
+    const partByMesh = new Map();
 
     const resize = () => {
       cancelAnimationFrame(resizeFrame);
@@ -309,28 +248,56 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
       if (!part) return;
       const center = part.center;
       const size = part.bounds.getSize(new THREE.Vector3());
-      const distance = Math.max(Math.max(size.x, size.y, size.z) * (view === 2 ? 4.2 : 5.3), 0.34);
-      const angle = [0, 0.38, -0.42][view] || 0;
-      const direction = new THREE.Vector3(Math.sin(angle), view === 2 ? 0.12 : 0.04, Math.cos(angle));
-      animateCamera(center.clone().add(direction.multiplyScalar(distance)), center, 0.76);
+      const vertical = THREE.MathUtils.degToRad(camera.fov);
+      const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * camera.aspect);
+      const fitDistance = Math.max(
+        size.y / (2 * Math.tan(vertical / 2)),
+        size.x / (2 * Math.tan(horizontal / 2)),
+        size.z * 1.6,
+      );
+      // Leave a narrow anatomical margin around the selected structure.
+      const distance = Math.max(fitDistance * (view === 2 ? 1.15 : 1.32), 0.42);
+      const direction = camera.position.clone().sub(controls.target).normalize();
+      const bodyCenter = new THREE.Box3().setFromObject(root).getCenter(new THREE.Vector3());
+      const outward = center.clone().sub(bodyCenter);
+      outward.set(outward.x * 0.9, 0.06, outward.z * 2.5);
+      if (outward.lengthSq() > 0.002 && direction.dot(outward.normalize()) < 0.25) direction.copy(outward);
+      if (view === 1) direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.28);
+      if (view === 2) direction.applyAxisAngle(new THREE.Vector3(0, 1, 0), -0.32);
+      animateCamera(center.clone().add(direction.multiplyScalar(distance)), center, 0.95);
     };
     focusPartRef.current = focusPart;
 
     const refreshVisuals = () => {
-      if (!visualData || !visualTexture) return;
       const selected = selectedPartRef.current;
       const hovered = hoveredPartRef.current;
       const savedByName = new Map(Object.values(painDataRef.current).map((spot) => [canonicalName(spot.regionName), spot]));
       parts.forEach((part) => {
-        const offset = part.index * 4;
         const isVisible = layerAllows(layerRef.current, part.system) || part === selected;
         const spot = savedByName.get(canonicalName(part.name));
-        visualData[offset] = part === selected ? 255 : 0;
-        visualData[offset + 1] = part === hovered ? 255 : 0;
-        visualData[offset + 2] = spot ? Math.max(24, Math.round((spot.severity || 5) * 25.5)) : 0;
-        visualData[offset + 3] = isVisible ? (selected && part !== selected ? 52 : 255) : 0;
+        const dimmed = Boolean(selected && part !== selected);
+        part.meshes.forEach((mesh) => { mesh.visible = isVisible; });
+        part.materials.forEach((material, index) => {
+          if (material.color) {
+            material.color.copy(part.baseColors[index]);
+            if (spot) material.color.lerp(SELECTED_COLOR, Math.min((spot.severity || 5) / 12, 0.7));
+            if (part === hovered) material.color.lerp(HOVER_COLOR, 0.72);
+            if (part === selected) material.color.lerp(SELECTED_COLOR, 0.92);
+          }
+          if (material.emissive) {
+            material.emissive.copy(part.baseEmissives[index]);
+            if (part === hovered) material.emissive.lerp(HOVER_COLOR, 0.28);
+            if (part === selected) material.emissive.lerp(SELECTED_COLOR, 0.3);
+          }
+          const transparent = dimmed || part.baseTransparent[index];
+          if (material.transparent !== transparent) {
+            material.transparent = transparent;
+            material.needsUpdate = true;
+          }
+          material.depthWrite = dimmed ? false : part.baseDepthWrite[index];
+          material.opacity = part.baseOpacity[index] * (dimmed ? 0.36 : 1);
+        });
       });
-      visualTexture.needsUpdate = true;
     };
 
     const updatePartList = () => {
@@ -375,6 +342,7 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
       camera,
       controls,
       root,
+      frameBody,
       refreshVisuals,
       setLayer(mode) {
         layerRef.current = mode;
@@ -390,75 +358,65 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
     };
     engineRef.current = engine;
 
-    const loadAtlas = async () => {
+    const loadModel = async () => {
       try {
-        const atlasResponse = await fetch(ATLAS_URL);
-        if (!atlasResponse.ok) throw new Error("The anatomy index could not be loaded.");
-        atlas = await atlasResponse.json();
-        const textureWidth = THREE.MathUtils.ceilPowerOfTwo(atlas.parts.length);
-        visualData = new Uint8Array(textureWidth * 4);
-        visualTexture = new THREE.DataTexture(visualData, textureWidth, 1, THREE.RGBAFormat, THREE.UnsignedByteType);
-        visualTexture.needsUpdate = true;
-
-        const partByIndex = new Map(atlas.parts.map((part, index) => [index, { ...part, index }]));
-        let completed = 0;
-        let cursor = 0;
-
-        const loadChunk = async (chunkIndex) => {
-          const chunk = atlas.chunks[chunkIndex];
-          // The neutral extension prevents static hosts from applying a second
-          // Content-Encoding layer; decodeGzip handles the payload itself.
-          const response = await fetch(`/models/bodyparts3d/body-${chunkIndex}.bin`);
-          const buffer = await decodeGzip(response, chunk.bytes);
-          if (disposed) return;
-          const geometriesBySystem = new Map();
-
-          atlas.parts.forEach((sourcePart, index) => {
-            if (sourcePart.chunk !== chunkIndex || !DISPLAY_SYSTEMS.has(sourcePart.system)) return;
-            const part = partByIndex.get(index);
-            const geometry = new THREE.BufferGeometry();
-            geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(buffer, part.positions, part.vertexCount * 3), 3));
-            geometry.setAttribute("normal", new THREE.BufferAttribute(new Int16Array(buffer, part.normals, part.vertexCount * 3), 3, true));
-            geometry.setIndex(new THREE.BufferAttribute(new Uint32Array(buffer, part.indices, part.indexCount), 1));
-            geometry.setAttribute("partIndex", new THREE.BufferAttribute(new Float32Array(part.vertexCount).fill(index), 1));
-            part.bounds = new THREE.Box3(new THREE.Vector3().fromArray(part.bounds[0]), new THREE.Vector3().fromArray(part.bounds[1]));
-            part.center = part.bounds.getCenter(new THREE.Vector3());
-            geometry.boundingBox = part.bounds.clone();
-            geometry.computeBoundingSphere();
-            part.geometry = geometry;
-            part.picker = new THREE.Mesh(geometry);
-            part.picker.matrixAutoUpdate = false;
-            part.picker.updateMatrixWorld(true);
-            parts.push(part);
-            const list = geometriesBySystem.get(part.system) || [];
-            list.push(geometry);
-            geometriesBySystem.set(part.system, list);
-          });
-
-          geometriesBySystem.forEach((geometries, system) => {
-            const merged = mergeGeometries(geometries, false);
-            if (!merged) return;
-            const material = createAtlasMaterial(system, visualTexture, textureWidth);
-            materials.push(material);
-            const mesh = new THREE.Mesh(merged, material);
-            mesh.frustumCulled = false;
-            root.add(mesh);
-          });
-          completed += 1;
-          setLoadProgress(Math.round((completed / atlas.chunks.length) * 100));
-        };
-
-        await Promise.all(Array.from({ length: 3 }, async () => {
-          while (cursor < atlas.chunks.length) {
-            const index = cursor;
-            cursor += 1;
-            await loadChunk(index);
-          }
-        }));
+        const gltf = await new GLTFLoader().loadAsync(MODEL_URL, (event) => {
+          if (event.lengthComputable && !disposed) setLoadProgress(Math.round((event.loaded / event.total) * 100));
+        });
         if (disposed) return;
+        root.add(gltf.scene);
+        root.updateMatrixWorld(true);
+        gltf.scene.children.forEach((node) => {
+          const meshes = [];
+          const materials = [];
+          node.traverse((mesh) => {
+            if (!mesh.isMesh || !mesh.geometry) return;
+            const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            const meshMaterials = sourceMaterials.map((material) => material.clone());
+            mesh.material = Array.isArray(mesh.material) ? meshMaterials : meshMaterials[0];
+            meshes.push(mesh);
+            materials.push(...meshMaterials);
+          });
+          if (meshes.length === 0) return;
+          // GLTFLoader can split one Blender object into multiple primitive meshes.
+          // The original Blender name is retained on the parent node's userData.
+          const name = node.userData.name || node.name || `Anatomical structure ${parts.length + 1}`;
+          const system = CONNECTIVE_NAME.test(name) ? "connective" : "muscular";
+          const color = system === "connective" ? CONNECTIVE_COLOR : MUSCLE_COLOR;
+          const variation = 0.9 + ((parts.length * 37) % 17) / 100;
+          materials.forEach((material) => {
+            if (material.color) material.color.copy(color).multiplyScalar(variation);
+            if (material.emissive) material.emissive.set(0x000000);
+            if ("metalness" in material) material.metalness = 0.02;
+            if ("roughness" in material) material.roughness = 0.63;
+          });
+          const bounds = new THREE.Box3().setFromObject(node);
+          if (bounds.isEmpty()) return;
+          const part = {
+            id: node.uuid,
+            name,
+            system,
+            meshes,
+            materials,
+            baseColors: materials.map((material) => material.color?.clone() || null),
+            baseEmissives: materials.map((material) => material.emissive?.clone() || null),
+            baseOpacity: materials.map((material) => material.opacity),
+            baseTransparent: materials.map((material) => material.transparent),
+            baseDepthWrite: materials.map((material) => material.depthWrite),
+            bounds,
+            center: bounds.getCenter(new THREE.Vector3()),
+          };
+          parts.push(part);
+          meshes.forEach((mesh) => {
+            pickableMeshes.push(mesh);
+            partByMesh.set(mesh, part);
+          });
+        });
+        if (parts.length === 0) throw new Error("This GLB contains no selectable anatomy meshes.");
         refreshVisuals();
         updatePartList();
         frameBody();
+        setLoadProgress(100);
         setModelStatus("ready");
       } catch (error) {
         if (disposed) return;
@@ -466,7 +424,7 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
         setModelStatus("error");
       }
     };
-    loadAtlas();
+    loadModel();
 
     const updatePointer = (event) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -476,18 +434,8 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
     const hitTest = (event) => {
       updatePointer(event);
       raycaster.setFromCamera(pointer, camera);
-      let result = null;
-      let nearest = Infinity;
-      parts.forEach((part) => {
-        const offset = part.index * 4;
-        if (!visualData || visualData[offset + 3] === 0 || !raycaster.ray.intersectsBox(part.bounds)) return;
-        const hit = raycaster.intersectObject(part.picker, false)[0];
-        if (hit && hit.distance < nearest) {
-          nearest = hit.distance;
-          result = { ...hit, part };
-        }
-      });
-      return result;
+      const hit = raycaster.intersectObjects(pickableMeshes.filter((mesh) => mesh.visible), false)[0];
+      return hit ? { ...hit, part: partByMesh.get(hit.object) } : null;
     };
 
     const hideTooltip = () => {
@@ -525,8 +473,39 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
     renderer.domElement.addEventListener("pointerleave", hideTooltip);
     renderer.domElement.addEventListener("click", onClick);
 
+    const projectedCorner = new THREE.Vector3();
+    const projectedCenter = new THREE.Vector3();
     const render = () => {
       controls.update();
+      const selected = selectedPartRef.current;
+      const blur = blurRef.current;
+      if (selected && blur) {
+        camera.updateMatrixWorld();
+        const { min, max } = selected.bounds;
+        const width = Math.max(host.clientWidth, 1);
+        const height = Math.max(host.clientHeight, 1);
+        let left = Infinity;
+        let right = -Infinity;
+        let top = Infinity;
+        let bottom = -Infinity;
+        for (let corner = 0; corner < 8; corner += 1) {
+          const x = corner & 1 ? max.x : min.x;
+          const y = corner & 2 ? max.y : min.y;
+          const z = corner & 4 ? max.z : min.z;
+          projectedCorner.set(x, y, z).project(camera);
+          const px = (projectedCorner.x + 1) * width / 2;
+          const py = (1 - projectedCorner.y) * height / 2;
+          left = Math.min(left, px);
+          right = Math.max(right, px);
+          top = Math.min(top, py);
+          bottom = Math.max(bottom, py);
+        }
+        projectedCenter.copy(selected.center).project(camera);
+        blur.style.setProperty("--focus-x", `${(projectedCenter.x + 1) * width / 2}px`);
+        blur.style.setProperty("--focus-y", `${(1 - projectedCenter.y) * height / 2}px`);
+        blur.style.setProperty("--focus-rx", `${Math.min(width * 0.42, Math.max(110, (right - left) * 0.58 + 24))}px`);
+        blur.style.setProperty("--focus-ry", `${Math.min(height * 0.46, Math.max(100, (bottom - top) * 0.58 + 24))}px`);
+      }
       renderer.render(scene, camera);
       frame = requestAnimationFrame(render);
     };
@@ -540,10 +519,16 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
       controls.dispose();
       gsap.killTweensOf(camera.position);
       gsap.killTweensOf(controls.target);
-      parts.forEach((part) => part.geometry?.dispose());
-      root.traverse((object) => object.geometry?.dispose?.());
+      const geometries = new Set();
+      const materials = new Set();
+      root.traverse((object) => {
+        if (object.geometry) geometries.add(object.geometry);
+        if (object.material) (Array.isArray(object.material) ? object.material : [object.material]).forEach((material) => materials.add(material));
+      });
+      geometries.forEach((geometry) => geometry.dispose());
       materials.forEach((material) => material.dispose());
-      visualTexture?.dispose();
+      platform.geometry.dispose();
+      platform.material.dispose();
       renderer.dispose();
       renderer.domElement.remove();
       engineRef.current = null;
@@ -554,11 +539,11 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
     if (!panelOpen || !infoPanelRef.current) return undefined;
     const context = gsap.context(() => {
       gsap.utils.toArray(".anatomy-info__section").forEach((section, index) => {
-        gsap.fromTo(section, { opacity: 0.4, y: 18, clipPath: "inset(0 0 15% 0)" }, {
+        if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) gsap.fromTo(section, { opacity: 0.4, y: 12, clipPath: "inset(0 0 10% 0)" }, {
           opacity: 1,
           y: 0,
           clipPath: "inset(0 0 0% 0)",
-          duration: 0.5,
+          duration: 0.28,
           ease: "power3.out",
           scrollTrigger: { trigger: section, scroller: infoPanelRef.current, start: "top 82%", toggleActions: "play none none reverse" },
         });
@@ -604,6 +589,7 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
     setPanelOpen(false);
     setSelectedRegion(null);
     engineRef.current?.refreshVisuals();
+    engineRef.current?.frameBody();
   };
 
   const handlePartSelect = (event) => {
@@ -615,6 +601,7 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
     <main ref={stageRef} className={`anatomy-explorer ${panelOpen ? "anatomy-explorer--split" : ""}`}>
       <section className="anatomy-stage" aria-label="3D anatomy pain selector">
         <div ref={hostRef} className="anatomy-stage__canvas" />
+        <div ref={blurRef} className={`anatomy-stage__focus-blur ${panelOpen ? "is-active" : ""}`} aria-hidden="true" />
 
         <div className="anatomy-stage__topline">
           <div className={`anatomy-stage__status ${modelStatus === "error" ? "is-error" : ""}`} aria-live="polite">
@@ -634,7 +621,7 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
         </div>
 
         <div className="anatomy-stage__layer-controls" aria-label="Anatomy layers">
-          {[['skeleton', 'Skeleton'], ['muscles', 'Muscles'], ['both', 'Both']].map(([mode, label]) => (
+          {[['muscular', 'Muscles'], ['connective', 'Connective'], ['all', 'All']].map(([mode, label]) => (
             <button key={mode} type="button" className={layerMode === mode ? "is-active" : ""} onClick={() => changeLayer(mode)}>{label}</button>
           ))}
         </div>
@@ -647,7 +634,7 @@ export default function BodyPartsCanvas({ selectedRegion, setSelectedRegion, set
 
         <p className="anatomy-stage__hint">Drag to rotate. Scroll to zoom. Select a structure to document pain.</p>
         {modelStatus === "error" && <p className="anatomy-stage__error">{loadError}</p>}
-        <p className="anatomy-stage__attribution">BodyParts3D 4.0 · CC BY 4.0</p>
+        <p className="anatomy-stage__attribution">Blender anatomy model · GLB</p>
         <div ref={tooltipRef} className="anatomy-tooltip" role="status" />
       </section>
 
